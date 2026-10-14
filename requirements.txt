@@ -1,0 +1,17 @@
+# Dependency inventory; versions have not yet been validated as a locked environment.
+# Install matching CUDA-enabled torch/torchvision builds for your system first.
+torch
+torchvision
+timm
+transformers
+safetensors
+einops
+numpy
+Pillow
+scikit-learn
+matplotlib
+tqdm
+opencv-python
+ftfy
+regex
+git+https://github.com/openai/CLIP.git

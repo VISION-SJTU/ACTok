@@ -1,0 +1,50 @@
+# Python and local tooling
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+.vscode/
+.idea/
+.claude/
+.omc/
+.ipynb_checkpoints/
+.env
+.env.*
+
+# Model weights (keep them local, including all pretrain checkpoints)
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+*.h5
+*.npz
+*.npy
+
+# Experiment outputs, datasets, archives, and local duplicate snapshots
+logs/
+runs/
+outputs/
+cache_data/
+backup/
+actok/
+caoxin/
+cka_imgs/
+cats/
+*.log
+*_history.csv
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.mov
+*.mp4
+*.pptx
+
+# LaTeX intermediate files
+*.aux
+*.out
+*.toc
+*.synctex.gz

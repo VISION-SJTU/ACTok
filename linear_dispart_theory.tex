@@ -1,0 +1,1064 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{bm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{natbib}
+
+% Theorem environments
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+% Notation shortcuts
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\calL}{\mathcal{L}}
+\newcommand{\calZ}{\mathcal{Z}}
+\newcommand{\calX}{\mathcal{X}}
+\newcommand{\calT}{\mathcal{T}}
+\newcommand{\calB}{\mathcal{B}}
+\newcommand{\norm}[1]{\left\|#1\right\|}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\rank}{\operatorname{rank}}
+\newcommand{\Var}{\operatorname{Var}}
+
+\title{\textbf{Linear Disentanglement in Representation Learning:\\
+Definition, Projection, and Knowledge Distillation}}
+
+\author{Technical Report}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Recent self-supervised vision models, notably DINO~\citep{caron2021emerging} and
+DINOv2~\citep{oquab2023dinov2}, produce features with a remarkable property:
+they are \emph{linearly separable} — a simple linear probe achieves near-supervised
+accuracy on ImageNet without any fine-tuning.  Despite widespread empirical
+observation of this property, a precise mathematical characterisation and a
+principled method to \emph{transfer} it to a student model via knowledge
+distillation remain underexplored.
+This report provides three contributions.
+First, we formalise \emph{linear disentanglement} as a structural property of a
+feature distribution, decomposing it into two independently measurable axes:
+\emph{isotropy} (eigenvalue uniformity of the covariance) and
+\emph{decorrelation} (vanishing off-diagonal covariance).
+Second, we show that ZCA whitening is the canonical projection into the linearly
+disentangled space and characterise its optimality among orthogonal
+transformations.
+Third, we derive a three-term distillation objective — variance regularisation,
+covariance regularisation, and whitened-space alignment — that simultaneously
+\emph{enforces} the structural property on the student and \emph{transfers}
+semantic content from the teacher.
+We discuss connections to VICReg~\citep{bardes2022vicreg}, Barlow
+Twins~\citep{zbontar2021barlow}, and Fisher Linear Discriminant Analysis.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+\label{sec:intro}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+Knowledge distillation typically trains a student network to mimic the
+\emph{output} of a teacher network — matching class probabilities, intermediate
+activations, or pairwise relational structure.
+Such objectives transfer \emph{what} the teacher knows but not necessarily
+\emph{how} the teacher organises its internal representations.
+
+DINO-style teachers are special: their patch tokens form rich spatial maps that
+can be directly clustered into semantically coherent segments without any
+supervision~\citep{caron2021emerging}.
+This is not merely a consequence of high accuracy; it follows from a structural
+property of the feature distribution.
+Concretely, DINO features are approximately \emph{isotropic} and
+\emph{decorrelated}, meaning the representation space is efficiently tiled by
+semantic directions with roughly equal energy.
+This property — which we formalise as \emph{linear disentanglement} — is what
+makes linear probes succeed.
+
+A student trained only to minimise cosine distance to teacher features will
+reproduce the directions of teacher features but may not reproduce their
+structural organisation.
+In particular, standard cosine or MSE losses are invariant to isotropic scaling
+and rotation: they do not penalise a student for concentrating all variance into
+a few directions (anisotropy) or for allowing correlated dimensions
+(entanglement).
+
+This report addresses the question: \textit{how can we distill not only the
+semantic content of a teacher but also its linear disentanglement property?}
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Notation and Setup}
+\label{sec:notation}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+Let $f_\theta : \calX \to \R^D$ be a student vision encoder parameterised by
+$\theta$.  For a minibatch of $N$ images $\{x_i\}_{i=1}^N$, define the feature
+matrix
+\[
+    Z \;=\; [f_\theta(x_1),\, \ldots,\, f_\theta(x_N)]^\top \;\in\; \R^{N \times D}.
+\]
+For a ViT backbone, each image yields $L$ patch tokens; we write
+$Z \in \R^{B L \times D}$ when the batch and spatial dimensions are flattened.
+
+The centred feature matrix is $\tilde{Z} = Z - \mathbf{1}\bar{z}^\top$ where
+$\bar{z} = \frac{1}{N}\sum_i z_i$.  The (unbiased) sample covariance is
+\[
+    C \;=\; \frac{1}{N-1}\,\tilde{Z}^\top \tilde{Z} \;\in\; \R^{D \times D}.
+\]
+Let $C = U \Sigma U^\top$ be the eigendecomposition with
+$\Sigma = \diag(\sigma_1 \ge \sigma_2 \ge \cdots \ge \sigma_D \ge 0)$.
+
+A teacher encoder $g_\phi : \calX \to \R^{D_t}$ is fixed and produces teacher
+features $Z^{(t)} \in \R^{N \times D_t}$.  A projection head
+$h_\psi : \R^D \to \R^{D_t}$ maps student features into the teacher's dimension.
+
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Defining Linear Disentanglement}
+\label{sec:definition}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+\subsection{Classical Linear Separability vs.\ Representational Disentanglement}
+\label{sec:classical}
+
+The classical notion of linear separability states that a dataset
+$\{(z_i, y_i)\}$ is \emph{linearly separable} if there exists a weight vector
+$w \in \R^D$ and bias $b$ such that $w^\top z_i + b > 0$ whenever $y_i = +1$ and
+$< 0$ otherwise.
+This is a binary, label-dependent property.
+
+For representation learning, we require a richer, label-free notion that
+characterises the \emph{geometry} of the feature distribution.
+Intuitively, a representation is linearly disentangled if
+
+\begin{enumerate}
+    \item it uses each dimension independently to encode distinct factors of
+          variation (decorrelation), and
+    \item it allocates roughly equal energy to each dimension rather than
+          collapsing into a low-dimensional subspace (isotropy).
+\end{enumerate}
+
+\noindent These conditions do not by themselves guarantee that classes are
+separable — they constrain the unlabelled marginal distribution, not the class
+geometry (Section~\ref{sec:joint} makes this precise).  Rather, they make a
+linear probe \emph{efficient to fit}: (i) no dimension is redundant and (ii) no
+single direction dominates the gradient signal during probing, so the probe is
+well-conditioned and label-efficient whenever the classes are in fact separable.
+
+\subsection{Isotropy: Eigenvalue Uniformity}
+\label{sec:isotropy}
+
+\begin{definition}[Participation Ratio]
+\label{def:pr}
+The \emph{participation ratio} (PR) of a feature matrix $Z \in \R^{N \times D}$
+is
+\[
+    \rho(Z) \;=\; \frac{\bigl(\sum_{i=1}^r \sigma_i\bigr)^2}{\,r \sum_{i=1}^r \sigma_i^2\,}
+    \;\in\; \bigl(0,\, 1\bigr],
+\]
+where the $\sigma_i$ are the eigenvalues of the sample covariance $C$
+(equivalently $\sigma_i \propto s_i^2$ for the singular values $s_i$ of
+$\tilde{Z}$) and $r = \rank(C)$.  Throughout, all spectral diagnostics
+($\rho$, spectral entropy, and the effective rank of
+Section~\ref{sec:topk}) are defined on this single eigenvalue (variance)
+spectrum, so they are mutually consistent.
+\end{definition}
+
+\begin{proposition}
+$\rho(Z) = 1$ if and only if $\sigma_1 = \sigma_2 = \cdots = \sigma_r$
+(perfect isotropy). $\rho(Z) = 1/r$ if all variance is concentrated in a single
+direction.
+\end{proposition}
+\begin{proof}
+By the Cauchy-Schwarz inequality,
+$\bigl(\sum_i \sigma_i\bigr)^2 \le r \sum_i \sigma_i^2$
+with equality iff all $\sigma_i$ are equal.
+Dividing by $r \sum_i \sigma_i^2$ gives $\rho \le 1$ with $\rho = 1$ at equality.
+For the lower bound, when $\sigma_1 > 0$ and $\sigma_i = 0$ for $i > 1$,
+$\rho = \sigma_1^2 / (r \sigma_1^2) = 1/r$.
+\end{proof}
+
+A related measure is the \emph{spectral entropy}:
+\[
+    H(Z) \;=\; -\sum_{i=1}^r p_i \log p_i, \quad
+    p_i = \frac{\sigma_i}{\sum_j \sigma_j}.
+\]
+This is maximised at $H = \log r$ when all singular values are equal, recovering
+the uniform (isotropic) case.  Both $\rho$ and $H$ are label-free diagnostics
+for collapse detection during training.
+
+\subsection{Decorrelation: Off-Diagonal Covariance}
+\label{sec:decorrelation}
+
+\begin{definition}[Decorrelation Penalty]
+\label{def:decor}
+The \emph{decorrelation penalty} of feature matrix $Z$ is
+\[
+    \mathcal{D}(Z)
+    \;=\; \norm{C \odot (\bm{J} - \bm{I})}_F^2
+    \;=\; \sum_{i \ne j} C_{ij}^2,
+\]
+where $\bm{J}$ is the all-ones matrix, $\odot$ is element-wise product, and
+$C$ is the sample covariance.
+\end{definition}
+
+$\mathcal{D}(Z) = 0$ if and only if the feature dimensions are pairwise
+uncorrelated, i.e.\ $C$ is diagonal.  Combined with Definition~\ref{def:pr},
+full linear disentanglement corresponds to $C = \sigma^2 I$ for some
+$\sigma > 0$.
+
+\begin{remark}[Information-Theoretic Interpretation]
+Minimising $\mathcal{D}(Z)$ is a second-order approximation to minimising the
+pairwise mutual information $\sum_{i \ne j} I(Z_i; Z_j)$ between feature
+dimensions.  Under Gaussianity, the approximation is exact: $I(Z_i; Z_j) = 0
+\Leftrightarrow C_{ij} = 0$.
+\end{remark}
+
+\subsection{Joint Characterisation}
+\label{sec:joint}
+
+\begin{definition}[Linear Disentanglement]
+\label{def:ld}
+A feature distribution $p(z)$ with mean $\mu$ and covariance $C$ is
+\emph{$(\rho_0, \varepsilon)$-linearly disentangled} if
+\begin{equation}
+    \rho(Z) \;\ge\; \rho_0, \qquad
+    \mathcal{D}(Z) \;\le\; \varepsilon.
+\label{eq:ld_def}
+\end{equation}
+In the ideal limit $(\rho_0, \varepsilon) = (1, 0)$, the covariance reduces to a
+scaled identity: $C = \sigma^2 I$.
+\end{definition}
+
+\noindent\textbf{Connection to Linear Probe Performance.}\;
+We stress that linear disentanglement is a property of the \emph{marginal}
+(total) feature covariance $C$, which decomposes as $C = S_W + S_B$ into
+within- and between-class scatter $S_W, S_B$.  Consequently $C = \sigma^2 I$
+does \emph{not} by itself imply class separability: it constrains only the sum
+$S_W + S_B$, not the class geometry, and one can have $C = \sigma^2 I$ with
+coincident class means (zero separability).  Disentanglement should therefore be
+read as a \emph{conditioning} property rather than a sufficient condition for a
+successful probe.  Two precise statements make the connection rigorous.
+
+\emph{(i) Whitening turns the optimal probe into nearest-class-mean.}
+Under the homoscedastic-Gaussian model $z \mid y{=}c \sim
+\mathcal{N}(\mu_c, S_W)$ with shared within-class covariance $S_W$, the
+Bayes-optimal classifier is linear and ranks classes by the Mahalanobis distance
+$\norm{z-\mu_c}_{S_W^{-1}}$.  Applying the $S_W$-whitening $z \mapsto
+S_W^{-1/2}z$ makes this distance Euclidean, so the optimal probe reduces to
+nearest-class-mean and separability is governed by the \emph{whitened}
+between-class separation $\norm{S_W^{-1/2}(\mu_a-\mu_b)}_2$.  This is the precise
+sense in which whitening is the best case for a linear probe — but it is
+whitening by $S_W$, not by the total covariance $C$, and it recovers exactly
+Fisher's criterion $J = \tr(S_W^{-1}S_B)$.
+
+\emph{(ii) Isotropy improves probe conditioning.}
+When the probe is fit by (regularised) least squares or gradient descent, its
+optimisation is governed by the condition number $\kappa(C) =
+\sigma_1/\sigma_D$.  Isotropy ($\rho \to 1$, i.e. $\kappa \to 1$) minimises this
+condition number, giving faster, more label-efficient probe convergence and
+tighter margin-based generalisation bounds, \emph{independently} of the class
+geometry.
+
+The objective of Section~\ref{sec:distillation} whitens by the total batch
+covariance — an unsupervised proxy that coincides with $S_W$ only when
+$S_B \ll S_W$.  It therefore delivers (ii) directly and approximates (i); a
+fully supervised $S_W$-whitening would be required to realise Fisher's
+discriminant exactly.
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Transforming Features into the Linearly Disentangled Space}
+\label{sec:whitening}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+\subsection{ZCA Whitening}
+\label{sec:zca}
+
+Given features $Z \in \R^{N \times D}$, the goal is to find a linear
+transformation $W \in \R^{D \times D}$ such that the transformed features
+$Z_w = \tilde{Z} W$ satisfy $\Cov(Z_w) = I$.
+
+\begin{definition}[ZCA Whitening Transform]
+\label{def:zca}
+Let $C = U \Sigma U^\top$ be the eigendecomposition of the sample covariance.
+The \emph{ZCA whitening matrix} is
+\begin{equation}
+    W_{\mathrm{ZCA}} \;=\; U \,\Sigma^{-1/2} U^\top,
+\label{eq:zca}
+\end{equation}
+where $\Sigma^{-1/2} = \diag(\sigma_1^{-1/2}, \ldots, \sigma_D^{-1/2})$
+(with regularisation $\sigma_i \leftarrow \sigma_i + \varepsilon$ in practice).
+The whitened features are $Z_w = \tilde{Z}\, W_{\mathrm{ZCA}}$.
+\end{definition}
+
+\begin{proposition}[Covariance of Whitened Features]
+$\Cov(Z_w) = I_D$.
+\end{proposition}
+\begin{proof}
+\[
+    \Cov(Z_w) = W_{\mathrm{ZCA}}^\top C\, W_{\mathrm{ZCA}}
+    = (U \Sigma^{-1/2} U^\top)^\top (U \Sigma U^\top) (U \Sigma^{-1/2} U^\top)
+    = U \Sigma^{-1/2} \Sigma \Sigma^{-1/2} U^\top = I.
+\]
+\end{proof}
+
+\noindent After ZCA whitening, the feature distribution achieves perfect linear
+disentanglement in the sense of Definition~\ref{def:ld} with
+$(\rho_0, \varepsilon) = (1, 0)$.  We caution that this is a statement about the
+marginal covariance only: when the spectrum is highly anisotropic, exact
+full-rank whitening amplifies near-zero directions and can \emph{degrade} rather
+than improve probe accuracy.  The regularised, rank-truncated variant of
+Section~\ref{sec:topk} is therefore what we use in practice; full-rank ZCA is the
+idealised limit, not the deployed transform.
+
+\subsection{Optimality Among Whitening Transforms}
+\label{sec:zca_optimality}
+
+Many whitening transforms satisfy $\Cov(Z_w) = I$.  The PCA whitening matrix
+$W_{\mathrm{PCA}} = U \Sigma^{-1/2}$ also achieves this but additionally rotates
+features into the eigenbasis of $C$.  ZCA whitening has a unique optimality
+property:
+
+\begin{theorem}[ZCA Minimises Rotation]
+\label{thm:zca_optimal}
+Among all whitening matrices $W$ satisfying $W^\top C W = I$, the ZCA
+transform $W_{\mathrm{ZCA}}$ minimises the expected squared distance between
+original and whitened features:
+\[
+    W_{\mathrm{ZCA}} = \arg\min_{W:\,W^\top C W = I}\; \E_z \norm{z - Wz}_2^2.
+\]
+\end{theorem}
+\begin{proof}
+We write the per-sample whitening as $z \mapsto W^\top z$ (consistent with
+$Z_w = \tilde Z\,W$); since $W_{\mathrm{ZCA}}$ is symmetric this coincides with
+$z \mapsto Wz$ at the optimum.  With $z$ centred and $\E[zz^\top] = C$,
+\[
+    \E\norm{z - W^\top z}^2
+    = \tr\!\bigl((I - W)^\top C\,(I - W)\bigr)
+    = \tr(C) - 2\tr(CW) + \tr(W^\top C W).
+\]
+Every whitening matrix satisfies $W^\top C W = I$, so $\tr(W^\top C W) = D$ is
+constant and minimising the distance is equivalent to \emph{maximising}
+$\tr(CW)$.  The constraint $W^\top C W = I$ is equivalent to $W = C^{-1/2}Q$ for
+some orthogonal $Q$, where $C^{-1/2} = U\Sigma^{-1/2}U^\top$ is the symmetric
+inverse square root (indeed
+$W^\top C W = Q^\top C^{-1/2} C\, C^{-1/2} Q = Q^\top Q = I$).  Then
+\[
+    \tr(CW) = \tr\!\bigl(C\,C^{-1/2}Q\bigr) = \tr\!\bigl(C^{1/2}Q\bigr).
+\]
+For the symmetric positive-definite matrix $C^{1/2}$, the orthogonal Procrustes
+inequality gives $\tr(C^{1/2}Q) \le \tr(C^{1/2})$ over all orthogonal $Q$, with
+equality iff $Q = I$.  Hence the maximiser is
+$W = C^{-1/2} = U\Sigma^{-1/2}U^\top = W_{\mathrm{ZCA}}$.
+\end{proof}
+
+This optimality has a direct implication for distillation: applying ZCA
+whitening to teacher features produces a target that is as close as possible
+(in $\ell_2$ sense) to the original teacher features while being perfectly
+linearly disentangled.  The whitening does not arbitrarily rotate the semantic
+directions; it merely rescales them.
+
+\subsection{Batch Approximation and Regularisation}
+\label{sec:batch_zca}
+
+During training, the true covariance $C$ is unknown and must be estimated from
+minibatches of size $N$.  The estimator
+\[
+    \hat{C} = \frac{1}{N}\, \tilde{Z}^\top \tilde{Z}
+\]
+is consistent but biased for small $N$.  In practice two adjustments are needed.
+
+\textbf{Regularisation.}\; Near-zero eigenvalues (dormant dimensions) cause
+numerical instability in $\Sigma^{-1/2}$.  We replace $\sigma_i$ by
+$\sigma_i + \varepsilon$ with $\varepsilon \in [10^{-4}, 10^{-2}]$.
+This also controls the \emph{whitening radius}: strongly regularised whitening
+$({\varepsilon} \gg \sigma_i)$ approaches an isotropic identity transform, while
+$\varepsilon \to 0$ recovers exact ZCA.
+
+\textbf{Feature dimension.}\; For high-dimensional features ($D \gg N$), the
+empirical covariance has rank at most $N$, and the pseudo-inverse should be used.
+In practice, for ViT patch features with $D = 768$ and $N = B \cdot L \ge 4096$,
+the batch is typically large enough for a well-conditioned estimate.
+
+\textbf{Computational cost.}\; The dominant cost is the EVD (or SVD) of
+$\hat{C} \in \R^{D \times D}$, which is $\mathcal{O}(D^3)$ per step.  For
+$D = 768$, this is approximately $4.5 \times 10^8$ FLOPs — comparable to one
+transformer attention layer.  The whitening matrix $W$ is applied as a
+single matmul $\tilde{Z} W$ at cost $\mathcal{O}(ND^2)$.
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Knowledge Distillation of Linear Disentanglement}
+\label{sec:distillation}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+\subsection{Problem Formulation}
+\label{sec:formulation}
+
+Standard feature-level distillation minimises
+\[
+    \calL_{\mathrm{distill}}
+    = \E_{x}\Bigl[\ell\bigl(h_\psi(f_\theta(x)),\; g_\phi(x)\bigr)\Bigr],
+\]
+where $\ell$ is typically cosine distance or MSE.
+This objective is invariant to arbitrary invertible linear transformations of
+the teacher's feature space, meaning the student may converge to a
+representation that has the same pairwise angles as the teacher but completely
+different covariance structure.
+
+Our goal is to design $\calL$ such that the student satisfies
+Definition~\ref{def:ld} at convergence \emph{without requiring class labels}.
+
+\subsection{The Three-Term Objective}
+\label{sec:loss}
+
+Let $Z_s = h_\psi(f_\theta(\mathcal{B})) \in \R^{N \times D_t}$ be student
+features after the projection head on a minibatch $\mathcal{B}$, and
+$Z_t = g_\phi(\mathcal{B}) \in \R^{N \times D_t}$ be teacher features
+(stop-gradient).  We propose:
+
+\begin{equation}
+\boxed{
+    \calL_{\mathrm{LD}}(Z_s, Z_t)
+    \;=\; \lambda_v \calL_v(Z_s)
+    \;+\; \lambda_c \calL_c(Z_s)
+    \;+\; \lambda_a \calL_a(Z_s, Z_t)
+}
+\label{eq:total_loss}
+\end{equation}
+
+with the three terms defined as follows.
+
+\paragraph{Variance term $\calL_v$ — prevent dimensional collapse.}
+\begin{equation}
+    \calL_v(Z_s) \;=\; \frac{1}{D_t}\sum_{j=1}^{D_t}
+    \max\!\bigl(0,\; \gamma - \sqrt{\Var(Z_s^{(j)}) + \delta}\bigr),
+\label{eq:var_loss}
+\end{equation}
+where $Z_s^{(j)}$ denotes the $j$-th column of $Z_s$, $\gamma > 0$ is a
+target standard deviation (typically $\gamma = 1$), and $\delta > 0$ prevents
+gradient vanishing near zero.  This hinge loss becomes active when any
+dimension collapses, pushing its variance back above $\gamma$.
+
+\paragraph{Covariance term $\calL_c$ — enforce decorrelation.}
+\begin{equation}
+    \calL_c(Z_s) \;=\; \frac{1}{D_t}\, \mathcal{D}(Z_s)
+    \;=\; \frac{1}{D_t}\sum_{i \ne j} \hat{C}_{ij}^2,
+\label{eq:cov_loss}
+\end{equation}
+where $\hat{C}$ is the sample covariance of $Z_s$.  This directly minimises the
+decorrelation penalty of Definition~\ref{def:decor}.  Unlike the variance term,
+$\calL_c$ is active at all times and enforces linear disentanglement as an
+ongoing structural constraint.
+
+\paragraph{Whitened alignment term $\calL_a$ — semantic transfer in the disentangled basis.}
+\begin{equation}
+    \calL_a(Z_s, Z_t) \;=\; \frac{1}{N}\sum_{i=1}^N
+    \bigl(2 - 2\,\langle \hat{z}_{s,i}^w,\, \hat{z}_{t,i}^w\rangle\bigr),
+\label{eq:align_loss}
+\end{equation}
+where $\hat{z}^w = z^w / \norm{z^w}$, and $z^w$ denotes the ZCA-whitened,
+centred feature vector.  The factor $2 - 2\cos(\cdot) \in [0,4]$ equals the
+squared $\ell_2$ distance on the unit sphere and provides stable gradients near
+convergence.
+
+\begin{remark}
+The alignment term $\calL_a$ differs from plain cosine distillation in two ways:
+(1) both student and teacher are whitened using their respective batch covariances
+before comparison, and (2) the whitening equalises the gradient magnitude across
+all feature dimensions (see Section~\ref{sec:gradient_analysis}).
+\end{remark}
+
+\subsection{Gradient Analysis: Why Whitened Alignment Matters}
+\label{sec:gradient_analysis}
+
+Consider the gradient of the plain cosine alignment loss with respect to the
+student feature $z_s$ (before any projection head):
+\[
+    \nabla_{z_s} \calL_{\cos}
+    = -\frac{1}{\norm{z_s}} \Bigl(
+        \hat{z}_t - \langle \hat{z}_s, \hat{z}_t\rangle \hat{z}_s
+      \Bigr).
+\]
+This gradient is proportional to the rejection of $\hat{z}_t$ from
+$\hat{z}_s$.  In the original (non-whitened) space, dimensions with large
+variance in the teacher produce large gradient components, while low-variance
+dimensions are effectively ignored.
+
+After ZCA whitening, the teacher features satisfy $\Cov(Z_t^w) = I$, so all
+dimensions have equal variance.  The gradient of the whitened alignment loss
+\[
+    \nabla_{z_s} \calL_a
+    = W_s^\top \bigl(\hat{z}_{t}^w - \langle \hat{z}_s^w, \hat{z}_t^w\rangle
+      \hat{z}_s^w\bigr),
+\]
+where $W_s$ is the student's batch whitening matrix, has magnitude spread
+uniformly across dimensions.  This ensures the student must match \emph{all}
+semantic directions in the teacher, not just the dominant principal components.
+
+\subsection{Interaction Between the Three Terms}
+\label{sec:interaction}
+
+The three terms are complementary and form a self-consistent system:
+
+\begin{itemize}
+    \item $\calL_c$ drives $C_s \to \diag(\sigma_1, \ldots, \sigma_D)$
+          (diagonal covariance).
+    \item $\calL_v$ drives $\sigma_j \ge \gamma$ for all $j$
+          (no dimension is dead).
+    \item $\calL_a$ drives $Z_s^w \to Z_t^w$ (semantic alignment after whitening).
+\end{itemize}
+
+Together, $\calL_v + \calL_c$ enforce $C_s \approx \sigma^2 I$, i.e.\ the
+student features become linearly disentangled \emph{as a structural property},
+independently of any teacher.  The alignment term $\calL_a$ then provides a
+semantic \emph{target} in the already-disentangled space.
+
+\begin{proposition}[Convergence Condition]
+Assume $\lambda_v, \lambda_c, \lambda_a > 0$ and that the student has sufficient
+capacity.  At a stationary point of $\calL_{\mathrm{LD}}$:
+\begin{enumerate}
+    \item $C_s \approx \sigma^2 I$ (from $\calL_v + \calL_c$).
+    \item The student's whitened patch features are angularly aligned with the
+          teacher's whitened patch features (from $\calL_a$).
+    \item The student's isotropy score satisfies $\rho(Z_s) \approx 1$
+          (Definition~\ref{def:pr}).
+\end{enumerate}
+\end{proposition}
+
+\subsection{Integration with Existing Distillation Objectives}
+\label{sec:integration}
+
+In a multi-teacher distillation framework, the total loss combines the LD
+objective with standard token-level and patch-level distillation:
+
+\begin{equation}
+    \calL_{\mathrm{total}}
+    = \underbrace{\calL_{\cos}^{\mathrm{cls}} + \calL_{\mathrm{rel}} + \calL_{\cos}^{\mathrm{patch}}}_{\text{standard feature distillation}}
+    \;+\; \underbrace{\calL_{\mathrm{LD}}}_{\text{linear disentanglement}}.
+\label{eq:total}
+\end{equation}
+
+The LD term is applied selectively to teachers whose features exhibit linear
+disentanglement (DINO, DINOv2), while other teachers (CLIP, MAE) are handled by
+their standard distillation terms.
+
+Crucially, the projection head $h_\psi$ used in $\calL_{\mathrm{LD}}$ should be
+\emph{separate} from the head used in $\calL_{\cos}^{\mathrm{patch}}$.  This is
+because:
+(i) cosine alignment is invariant to covariance structure and does not penalise
+    entangled features;
+(ii) having a dedicated LD head allows $\calL_{\mathrm{LD}}$ to shape the
+    representation without conflicting with the cosine supervision signal.
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Multi-Teacher Linear Disentanglement Distillation}
+\label{sec:multi_teacher}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+So far we have focused on distilling the linear disentanglement property from a
+single DINO teacher.  A natural question arises: can we extend this framework
+to \emph{all} teachers, including those (like MAE) whose features are not
+naturally linearly separable?  And if so, what is gained by using multiple
+linearly-separable targets simultaneously?
+
+\subsection{Information Preservation under ZCA Whitening}
+\label{sec:invertibility}
+
+The key observation is that ZCA whitening is an \emph{invertible} linear map.
+
+\begin{proposition}[ZCA Inverse]
+\label{prop:zca_inverse}
+The inverse of the ZCA whitening matrix
+$W_{\mathrm{ZCA}} = U\Sigma^{-1/2}U^\top$ is
+\[
+    W_{\mathrm{ZCA}}^{-1} \;=\; U\,\Sigma^{1/2} U^\top.
+\]
+Consequently, the whitened features $Z_w = \tilde{Z}\,W_{\mathrm{ZCA}}$
+contain exactly the same information as the original centred features $\tilde{Z}$:
+\[
+    \tilde{Z} = Z_w\, W_{\mathrm{ZCA}}^{-1}.
+\]
+\end{proposition}
+
+This establishes that applying ZCA to \emph{any} teacher — not only DINO — is a
+lossless operation.  The whitened MAE features $Z_t^{(\mathrm{mae}),w}$, for
+example, are in bijective correspondence with the original MAE encoder outputs.
+Distilling from $Z_t^{(\mathrm{mae}),w}$ is therefore fully equivalent in
+information content to distilling from the raw features.
+This exact equivalence holds for \emph{full-rank} ZCA; the rank-$K$ truncation of
+Section~\ref{sec:topk} is a deliberate, lossy restriction to the teacher's signal
+subspace, trading the noise tail for numerical stability.  Thus ``lossless''
+refers to the full-rank map, whereas in practice we retain only the top-$K$
+informative directions.
+
+\subsection{Why Whitening is Especially Beneficial for MAE}
+\label{sec:mae_benefit}
+
+Although ZCA preserves information for any teacher, the \emph{practical benefit}
+of whitening is largest for teachers whose feature covariance is highly
+anisotropic — i.e., teachers for which $\sigma_1 \gg \sigma_D$.
+MAE is precisely such a teacher.
+
+\paragraph{Spectral analysis of MAE features.}
+MAE is trained to reconstruct masked image patches in pixel or frequency space.
+Its optimal encoder features tend to concentrate along directions that explain the
+most reconstruction variance — low-spatial-frequency components, colour statistics,
+and prominent textures.  As a result, the empirical covariance of MAE patch
+tokens has a rapidly decaying eigenspectrum:
+\[
+    \sigma_1^{(\mathrm{mae})} \;\gg\; \sigma_2^{(\mathrm{mae})} \;\gg\; \cdots
+    \;\gg\; \sigma_D^{(\mathrm{mae})}.
+\]
+By contrast, DINOv2's eigenspectrum is considerably flatter, consistent with its
+near-isotropic, linearly-separable representation~\citep{oquab2023dinov2}.
+
+\paragraph{Gradient domination in raw-feature distillation.}
+Consider an MSE loss between student projection $Z_s$ and MAE teacher features
+$Z_t$ in the eigenbasis $U$ of $\Cov(Z_t)$.  The gradient of the loss with
+respect to the $k$-th principal component of the student is
+\[
+    \frac{\partial \calL_{\mathrm{MSE}}}{\partial [Z_s U]_k}
+    \;=\; \frac{2}{N}\bigl([Z_s U]_k - [Z_t U]_k\bigr).
+\]
+The mean squared magnitude of this gradient over the training distribution
+is $\mathcal{O}(\sigma_k^{(\mathrm{mae})})$, since the teacher components have
+variance $\sigma_k$.  Therefore, the update to the student is dominated by the
+$k=1$ direction — the dominant reconstruction pattern — and the remaining $D-1$
+directions receive progressively weaker training signal.
+
+\paragraph{Gradient equalisation after ZCA.}
+After whitening, $\Cov(Z_t^w) = I$, so every principal component of the whitened
+teacher has unit variance.  The gradient magnitudes become uniform:
+\begin{equation}
+    \E\!\left[\left(\frac{\partial \calL_a}{\partial [Z_s^w]_k}\right)^{\!2}\right]
+    \;=\; \mathcal{O}(1) \quad \forall\, k = 1, \ldots, D.
+\label{eq:grad_equal}
+\end{equation}
+This forces the student to fit \emph{all} of MAE's information — both the
+dominant reconstruction directions and the fine-grained, higher-frequency
+semantic details that raw MSE under-supervises.
+
+\subsection{Adaptive K Selection for Non-Isotropic Teachers}
+\label{sec:topk}
+
+Full-rank ZCA whitening, as defined in Section~\ref{sec:zca}, is well-motivated
+when the teacher's covariance matrix is well-conditioned (e.g.\ DINOv2).
+For teachers like MAE whose eigenspectrum decays rapidly, however, full-rank
+whitening causes two problems:
+\begin{enumerate}
+    \item \textbf{Noise amplification.}  Near-zero eigenvalues $\sigma_k \approx 0$
+          produce $\sigma_k^{-1/2} \gg 1$ in the whitening matrix, amplifying
+          the directions that carry essentially no signal.
+    \item \textbf{Ill-conditioning.}  Even with regularisation $\sigma_k \leftarrow
+          \sigma_k + \varepsilon$, forcing the student to match noise directions
+          wastes gradient steps and can destabilise training.
+\end{enumerate}
+
+We therefore restrict both the whitening and the distillation objective to the
+\emph{linearly separable subspace} of the teacher — the span of eigenvectors
+whose eigenvalues carry genuine signal.  An adaptive criterion determines where
+signal ends and noise begins.
+
+\paragraph{Effective rank as the primary criterion.}
+\begin{definition}[Effective Rank]
+\label{def:stable_rank}
+The \emph{effective rank} of a feature matrix $Z$ with centred covariance
+eigenvalues $\sigma_1 \ge \cdots \ge \sigma_D \ge 0$ is
+\begin{equation}
+    \operatorname{erank}(Z)
+    \;=\; \frac{\bigl(\sum_{i=1}^D \sigma_i\bigr)^2}{\sum_{i=1}^D \sigma_i^2}
+    \;\in\; [1,\, D].
+\label{eq:stable_rank}
+\end{equation}
+This is the participation-ratio effective rank; it satisfies
+$\operatorname{erank}(Z) = r\cdot\rho(Z)$ with $\rho$ and $r=\rank(C)$ as in
+Definition~\ref{def:pr}.  We avoid the name ``stable rank'' for this quantity, as
+that term conventionally denotes the distinct operator-norm ratio
+$\norm{\,\cdot\,}_F^2/\norm{\,\cdot\,}_2^2$.
+\end{definition}
+
+The effective rank equals $D$ when all eigenvalues are identical (perfect
+isotropy) and equals $r$ when only $r$ eigenvalues are nonzero (rank-$r$ matrix).
+It is continuous, differentiable, and bounded, making it a natural proxy for
+the effective dimensionality of the feature distribution.
+
+\paragraph{Energy threshold as a secondary criterion.}
+The energy-based rank is
+\begin{equation}
+    K_\text{energy}(\tau)
+    \;=\; \min\!\left\{k : \frac{\sum_{i=1}^k \sigma_i}{\sum_{i=1}^D \sigma_i}
+    \ge \tau\right\},
+\label{eq:k_energy}
+\end{equation}
+for a threshold $\tau \in (0,1)$ (typically $\tau = 0.90$).  This guarantees
+that the selected subspace contains at least $\tau$ of the total feature variance,
+providing a signal-energy floor.
+
+\paragraph{Combined adaptive criterion.}
+We define the selected dimension as
+\begin{equation}
+\boxed{
+    K \;=\; \operatorname{clip}\!\Bigl(
+        \min\bigl(\lfloor\operatorname{erank}(Z_t)\rfloor,\; K_\text{energy}(\tau)\bigr),\;
+        K_{\min},\; D
+    \Bigr).
+}
+\label{eq:k_select}
+\end{equation}
+Taking the \emph{minimum} of the two criteria is conservative: a dimension is
+included only if \emph{both} criteria consider it to carry signal.
+The floor of the effective rank provides one estimate of the active
+dimensionality; the energy threshold provides a complementary upper bound based
+on cumulative variance.  Together they exclude the noise tail robustly, even when one
+criterion alone might be too permissive.
+
+Table~\ref{tab:k_values} reports typical $K$ values for the two primary patch
+teachers.
+
+\begin{table}[h]
+\centering
+\caption{Typical adaptive K values for different teachers ($D=768$, $\tau=0.90$).
+The MAE values are approximate and depend on training dataset and model size.}
+\label{tab:k_values}
+\begin{tabular}{lcccc}
+\toprule
+Teacher & $\operatorname{erank}(Z_t)$ & $K_\text{energy}(0.90)$ & Selected $K$ & $K/D$ \\
+\midrule
+DINOv2-B  & $\approx 700$  & $\approx 680$ & $\approx 680$ & $88\%$ \\
+MAE-B     & $\approx 120$  & $\approx 250$ & $\approx 120$ & $16\%$ \\
+MAE-L ($D{=}1024$) & $\approx 180$ & $\approx 350$ & $\approx 180$ & $18\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Top-K distillation in teacher's eigenbasis.}
+Given the selected $K$ and the corresponding top-$K$ eigenvectors
+$U_k \in \R^{D \times K}$ of the teacher covariance, we modify the distillation
+procedure as follows.
+
+\begin{enumerate}
+    \item \textbf{Project teacher:}
+          $Z_t^{(k)} = \tilde{Z}_t\, U_k \in \R^{N \times K}$. \\
+          Apply ZCA whitening to obtain $Z_t^{w(k)} = Z_t^{(k)}\, W_t$
+          where $W_t$ is the $K \times K$ ZCA matrix of $Z_t^{(k)}$.
+
+    \item \textbf{Project student:}
+          $Z_s^{(k)} = \tilde{Z}_s\, U_k \in \R^{N \times K}$ (gradients flow). \\
+          Apply stop-gradient ZCA: $Z_s^{w(k)} = Z_s^{(k)}\, W_s^{\mathrm{sg}}$
+          where $W_s^{\mathrm{sg}}$ is computed from $\operatorname{sg}(Z_s^{(k)})$,
+          so it is a constant w.r.t.\ gradient computation but the linear map
+          $Z_s^{(k)} \mapsto Z_s^{w(k)}$ is differentiable.
+
+    \item \textbf{Losses (all in $K$-dim space):}
+          \begin{align}
+              \calL_v &= \textstyle\frac{1}{K}\sum_{j=1}^K \max(0,\,\gamma - \mathrm{std}([Z_s^{(k)}]_j)),
+              \label{eq:var_topk} \\
+              \calL_c &= \textstyle\frac{1}{K}\sum_{i \ne j} [\hat C_s^{(k)}]_{ij}^2,
+              \label{eq:cov_topk} \\
+              \calL_a &= 2 - 2\,\textstyle\frac{1}{N}\sum_i
+              \langle \hat z_{s,i}^{w(k)},\, \hat z_{t,i}^{w(k)}\rangle.
+              \label{eq:align_topk}
+          \end{align}
+\end{enumerate}
+
+\begin{remark}[Stop-gradient whitening]
+The whitening matrix $W_s^{\mathrm{sg}}$ is computed from a stop-gradient copy
+of $Z_s^{(k)}$.  This means the student's covariance is treated as a constant
+when computing gradients of $\calL_a$, and the gradient of the alignment loss
+with respect to $Z_s^{(k)}$ is simply $W_s^{\mathrm{sg}} \cdot \nabla_{\hat z}
+\calL_a$.  This avoids differentiating through the eigendecomposition (which is
+numerically fragile at repeated eigenvalues) while still allowing gradients to
+propagate to the student backbone through $Z_s^{(k)} = \tilde{Z}_s U_k$.
+\end{remark}
+
+\begin{remark}[Why project both into teacher's basis, not student's?]
+One could instead project each of teacher and student into their \emph{own}
+top-K eigenbases and align them separately.  We prefer teacher's basis for two
+reasons.  First, it ensures the student is trained to reproduce structure in the
+directions that are \emph{meaningful for the teacher} — the informative signal
+space.  Second, using separate eigenbases requires either a subspace alignment
+step (e.g.\ Procrustes rotation) or a CKA-style invariant loss, both of which
+reintroduce the covariance-invariance problem we are trying to solve.
+\end{remark}
+
+\subsection{Teacher Suitability Analysis}
+\label{sec:suitability}
+
+Not all teachers in a multi-teacher framework benefit equally from LD
+distillation.  Table~\ref{tab:suitability} summarises the analysis.
+
+\begin{table}[h]
+\centering
+\caption{Suitability of each teacher for LD distillation.}
+\label{tab:suitability}
+\begin{tabular}{lcccc}
+\toprule
+Teacher & Features used & Token count $N$ & Anisotropy & Apply LD? \\
+\midrule
+DINOv2  & Patch tokens  & $B \times L$         & Low  (DINO naturally isotropic) & \checkmark \\
+MAE     & Patch tokens  & $B \times L$         & High (reconstruction bias)      & \checkmark \\
+CLIP    & CLS token only & $B$                 & N/A  (covariance ill-conditioned) & $\times$ \\
+SAM     & Patch tokens  & $B \times L$         & Medium (boundary-focused)       & Optional \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The critical factor is the token count $N$ available per batch for
+estimating the covariance $\hat{C} \in \R^{D \times D}$.  For patch-based
+teachers, $N = B \times L$ (e.g.\ $16 \times 196 = 3136 \gg D = 768$), giving a
+well-conditioned estimator.  For CLIP, which provides only one global CLS token
+per image, $N = B \approx 32\text{–}64$, making the $D \times D$ covariance
+matrix severely rank-deficient and the ZCA transform numerically meaningless.
+LD distillation should therefore be applied to \textbf{patch-token teachers only}.
+
+\subsection{Multi-Teacher LD Loss}
+\label{sec:multi_teacher_loss}
+
+Let $\mathcal{T}_{\mathrm{patch}} \subseteq \mathcal{T}$ denote the subset of
+teachers that provide patch tokens (e.g.\ $\mathcal{T}_{\mathrm{patch}} =
+\{\mathrm{dinov3},\, \mathrm{mae}\}$).  For each teacher
+$k \in \mathcal{T}_{\mathrm{patch}}$, we introduce a dedicated projection head
+$h_k^{\mathrm{LD}} : \R^D \to \R^{D_k}$ that is \emph{separate} from the
+standard patch-alignment head $h_k$.  The multi-teacher LD loss is
+\begin{equation}
+    \calL_{\mathrm{LD}}^{\mathrm{total}}
+    \;=\; \sum_{k \in \mathcal{T}_{\mathrm{patch}}} w_k\,
+    \calL_{\mathrm{LD}}\!\bigl(Z_s^{(k)},\; Z_t^{(k)}\bigr),
+\label{eq:multi_ld}
+\end{equation}
+where $Z_s^{(k)} = h_k^{\mathrm{LD}}(f_\theta(\mathcal{B})) \in \R^{N \times D_k}$
+and $Z_t^{(k)} = g_k(\mathcal{B}) \in \R^{N \times D_k}$ are the student and
+teacher patch features respectively, flattened over the spatial dimension.
+Each $\calL_{\mathrm{LD}}$ applies the same three-term formula
+(Equation~\eqref{eq:total_loss}) independently.
+
+The total training objective becomes
+\begin{equation}
+    \calL
+    = \underbrace{\sum_{k \in \mathcal{T}} \calL_k^{\mathrm{std}}}_{\text{standard distillation}}
+    \;+\;
+    \underbrace{\calL_{\mathrm{LD}}^{\mathrm{total}}}_{\text{multi-teacher LD}},
+\label{eq:grand_total}
+\end{equation}
+where $\calL_k^{\mathrm{std}}$ includes CLS cosine, relational, and patch
+alignment losses for teacher $k$.
+
+\paragraph{Why separate LD heads?}
+There are two reasons.
+First, the standard patch loss (cosine or MSE) is invariant to the covariance
+structure and can be satisfied by an anisotropic representation.  Sharing weights
+between the standard and LD heads would create conflicting gradient signals.
+Second, having separate heads means the LD property is a \emph{structural
+constraint on the backbone}: at inference time, the LD heads are discarded and
+the backbone itself produces linearly-separable features, directly usable by
+linear probes.
+
+\subsection{Structural Effect on the Student Backbone}
+\label{sec:backbone_effect}
+
+We now describe informally what Equation~\eqref{eq:multi_ld} implies for the
+student backbone $f_\theta$.
+
+At a stationary point of $\calL_{\mathrm{LD}}^{\mathrm{total}}$:
+\begin{enumerate}
+    \item For each teacher $k$, the student projection $Z_s^{(k)}$ satisfies
+          $C_s^{(k)} \approx \sigma^2 I$ (from the variance and covariance terms),
+          meaning it is linearly disentangled with respect to teacher $k$'s
+          feature space.
+    \item $Z_s^{(k)}$ is angularly aligned with the ZCA-whitened teacher
+          $Z_t^{(k),w}$ (from the alignment term), meaning the student captures
+          all of teacher $k$'s semantic content uniformly across eigendirections.
+    \item Since the above holds independently for \emph{all} patch teachers, the
+          backbone must produce representations that can simultaneously be
+          projected into multiple linearly-disentangled spaces — each aligned
+          with a different teacher's content.
+\end{enumerate}
+
+This is a significantly stronger constraint than standard multi-teacher
+distillation: the student cannot satisfy it by collapsing to a low-dimensional
+subspace or by concentrating features along a single teacher's dominant
+directions.  The multi-teacher LD objective creates an implicit pressure for the
+backbone to learn a \emph{universally isotropic} representation that contains
+structured, linearly-separable information across multiple visual modalities
+(semantics, reconstruction, boundary detection).
+
+\subsection{Practical Hyperparameter Guidance}
+\label{sec:hyperparams}
+
+The loss weights $\{\lambda_v, \lambda_c, \lambda_a\}$ in
+Equation~\eqref{eq:total_loss} and per-teacher weights $w_k$ in
+Equation~\eqref{eq:multi_ld} require tuning.  We offer the following guidance.
+
+\textbf{Relative scale of $\lambda_v : \lambda_c : \lambda_a$.}
+Following VICReg~\citep{bardes2022vicreg}, we recommend $\lambda_v = \lambda_a =
+25$ and $\lambda_c = 1$.  The covariance term involves $D^2$ off-diagonal entries
+and thus has a much larger raw magnitude; the factor of $1/D$ normalisation in
+$\calL_c$ (Equation~\eqref{eq:cov_loss}) compensates for this.
+
+\textbf{Per-teacher weight $w_k$.}
+We recommend setting $w_k = 1$ for all teachers initially.  If the MAE LD loss
+converges faster than the DINO LD loss (because MAE's anisotropy is easily
+corrected by whitening), one may reduce $w_{\mathrm{mae}}$ after warm-up.
+
+\textbf{Whitening $\varepsilon$.}
+Use $\varepsilon = 10^{-3}$ for both DINO and MAE.  MAE's near-zero eigenvalues
+(dormant dimensions) are more common, so a slightly larger $\varepsilon =
+5 \times 10^{-3}$ may improve stability for MAE.
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Connection to Existing Methods}
+\label{sec:related}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+\paragraph{VICReg~\citep{bardes2022vicreg}.}
+VICReg applies variance, invariance, and covariance regularisation directly to
+\emph{two augmented views} of the same image in a self-supervised setting.
+Our $\calL_v$ and $\calL_c$ are identical to VICReg's variance and covariance
+terms applied to the student.  The key difference is that we replace the
+invariance term (which requires two views) with a whitened alignment term that
+leverages a pre-trained teacher — enabling the structural property to be
+acquired \emph{via distillation} rather than self-supervised contrastive
+learning.
+
+\paragraph{Barlow Twins~\citep{zbontar2021barlow}.}
+Barlow Twins minimises $\norm{C_{YY} - I}_F^2$ where $C_{YY}$ is the
+normalised cross-correlation matrix between two views.
+This simultaneously drives diagonal entries to 1 (variance, our $\calL_v$)
+and off-diagonal entries to 0 (decorrelation, our $\calL_c$).
+We apply the same spirit but decompose the two terms, allowing independent
+weighting.
+
+\paragraph{W-MSE~\citep{ermolov2021whitening}.}
+Whitening Mean Squared Error (W-MSE) applies online whitening to feature
+patches before computing MSE across augmentations.  Our $\calL_a$ is
+conceptually similar but differs in that we whiten the \emph{teacher's}
+representation — this transfers semantic structure from a frozen expert rather
+than enforcing invariance across augmentations.
+
+\paragraph{CKA-based distillation.}
+Linear CKA, defined as
+\[
+    \text{CKA}(X,Y) = \frac{\norm{X^\top Y}_F^2}{\norm{X^\top X}_F \norm{Y^\top Y}_F},
+\]
+is invariant to orthogonal transformations and to global isotropic scaling of
+either argument.  It is, however, \emph{not} invariant to arbitrary invertible
+linear maps — that property belongs to CCA, not CKA — so, contrary to a common
+shorthand, CKA is \emph{not} whitening-invariant.
+Nevertheless CKA is unsuitable as an objective for our purpose.  As a rotation-
+and scale-invariant \emph{similarity index} it references no canonical basis and
+no absolute scale, so maximising $\text{CKA}(Z_s, Z_t)$ does not pin the student
+covariance to any prescribed structure such as $C_s = \sigma^2 I$, and it cannot
+distinguish a decorrelated student from an orthogonal rotation of it that
+scrambles the basis.  CKA can therefore transfer relational structure but cannot
+\emph{enforce} the disentanglement target, which is intrinsically basis- and
+scale-dependent; our LD objective explicitly addresses this gap.
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Discussion}
+\label{sec:discussion}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+\paragraph{Why does DINO naturally produce linearly disentangled features?}
+DINO's self-distillation objective, combined with the centering and sharpening
+operations in its student/teacher update, implicitly prevents collapse
+(addressing $\calL_v$) and encourages diverse, distributed representations
+across the full feature space.  The centering operation in particular acts as a
+running estimate of feature mean, preventing any single direction from
+consistently dominating — a mechanism analogous to our $\calL_c$.
+
+\paragraph{Universality: applying LD loss to other teachers.}
+The framework naturally extends to any teacher.  For MAE features, which are
+good at dense prediction but not as isotropic as DINO, one could apply
+$\calL_{\mathrm{LD}}$ to distill a more isotropic version of MAE features.
+This would transfer MAE's spatial predictive power while adding the linear
+separability structure of DINO.
+
+\paragraph{The role of the separate LD head.}
+Using a dedicated projection head for the LD objective has an additional
+benefit: the head itself can be discarded at inference time.
+The student backbone $f_\theta$ is trained so that its intermediate features
+are linearly disentangled — the LD property is baked into the backbone, not the
+head.
+This is analogous to how DINO uses a separate projection head for its
+self-distillation but evaluates the backbone directly with linear probes.
+
+\paragraph{Batch size sensitivity.}
+The batch ZCA estimator (Section~\ref{sec:batch_zca}) requires $N \gg D$ for a
+well-conditioned covariance matrix.  In practice, for $D = 768$ with
+$B \times L = 16 \times 196 = 3136$ tokens per batch, the covariance is
+well-estimated.  However, for very small batches or large feature dimensions,
+a momentum-based running covariance estimate may be more stable.
+
+%%% ─────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+\label{sec:conclusion}
+%%% ─────────────────────────────────────────────────────────────────────────
+
+We have formalised the linear disentanglement property through two
+complementary axes — isotropy (participation ratio) and decorrelation
+(off-diagonal covariance penalty) — and shown that $C = \sigma^2 I$ is the
+ideal covariance structure for linear probe performance.
+
+ZCA whitening provides the canonical projection into the linearly disentangled
+space: it is the unique orthogonalisation that minimises the $\ell_2$ distance
+from the original features while achieving $\Cov(Z_w) = I$ exactly.  Its
+optimality (Theorem~\ref{thm:zca_optimal}) means that teacher semantics are
+preserved as closely as possible under the whitening constraint.
+
+The three-term distillation objective $\calL_{\mathrm{LD}}$ uses the variance
+and covariance terms to impose the structural property on the student, and the
+whitened alignment term to transfer teacher semantics in the disentangled basis.
+This design bridges self-supervised structural regularisation (VICReg-style) and
+feature-level knowledge distillation (DINO-style) in a single, principled
+objective.
+
+\bibliographystyle{plainnat}
+\begin{thebibliography}{10}
+
+\bibitem[Bardes et al.(2022)]{bardes2022vicreg}
+Bardes, A., Ponce, J., and LeCun, Y.
+\newblock VICReg: Variance-invariance-covariance regularization for
+  self-supervised learning.
+\newblock \emph{ICLR}, 2022.
+
+\bibitem[Caron et al.(2021)]{caron2021emerging}
+Caron, M., Touvron, H., Misra, I., J\'{e}gou, H., Mairal, J., Bojanowski, P., and Joulin, A.
+\newblock Emerging properties in self-supervised vision transformers.
+\newblock \emph{ICCV}, 2021.
+
+\bibitem[Ermolov et al.(2021)]{ermolov2021whitening}
+Ermolov, A., Siarohin, A., Sangineto, E., and Sebe, N.
+\newblock Whitening for self-supervised representation learning.
+\newblock \emph{ICML}, 2021.
+
+\bibitem[Oquab et al.(2023)]{oquab2023dinov2}
+Oquab, M., Darcet, T., Moutakanni, T., et al.
+\newblock DINOv2: Learning robust visual features without supervision.
+\newblock \emph{TMLR}, 2024.
+
+\bibitem[Zbontar et al.(2021)]{zbontar2021barlow}
+Zbontar, J., Jing, L., Misra, I., LeCun, Y., and Deny, S.
+\newblock Barlow twins: Self-supervised learning via redundancy reduction.
+\newblock \emph{ICML}, 2021.
+
+\end{thebibliography}
+
+\end{document}
