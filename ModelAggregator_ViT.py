@@ -258,10 +258,10 @@ class BackboneStuViT(nn.Module):
             print(f"Load from checkpoint: {pretrain_ckpt}")
             ckp = torch.load(pretrain_ckpt, map_location="cpu", weights_only=False)
             ckp = ckp.get('model', ckp)
-            for name, _ in self.named_parameters():
-                if name not in ckp:
-                    print(f"Warning: {name} not in checkpoint ... ")
-            self.student.load_state_dict(ckp, strict=False)
+            # Load the complete distilled model, including interaction blocks and heads.
+            # Full training checkpoints can also include frozen teacher weights.
+            ckp = {name: value for name, value in ckp.items() if not name.startswith("teachers.")}
+            self.load_state_dict(ckp, strict=True)
         self.student.interp_pos_embed()
 
         # stu = VanillaViT("vit_base_patch16_224")

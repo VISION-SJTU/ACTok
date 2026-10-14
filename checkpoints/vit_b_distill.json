@@ -1,0 +1,67 @@
+{
+  "filename": "vit_b_distill.pth",
+  "size_bytes": 717749214,
+  "sha256": "175956fc11674777027ac4b7efcea72e1268e94788a5b7d38dcad7fba0dd72c0",
+  "download_url": "https://github.com/VISION-SJTU/ACTok/releases/download/vit-b-checkpoint-v1/vit_b_distill.pth",
+  "implementation": "ModelAggregator_ViT.BackboneStuViT",
+  "variant": "original aggregation; not ModelAggregator_ViT_combine",
+  "constructor": {
+    "student": "vit_b",
+    "num_blocks": 1,
+    "in_dim": 768,
+    "dim": 768,
+    "out_dims": [
+      512,
+      768,
+      768
+    ],
+    "token_dim": 512,
+    "teacher_type": [
+      "clip",
+      "dinov3",
+      "mae"
+    ],
+    "img_size": 224
+  },
+  "normalization": {
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "output": {
+    "shape": [
+      "batch",
+      197,
+      768
+    ],
+    "representation": "DINO-head features; first token plus 196 spatial patch tokens at 224x224"
+  },
+  "contents": "197 state-dict tensors: student, interaction blocks, projections, learnable token, prediction heads; no teacher weights or optimizer state",
+  "training_metadata": "Not included in the checkpoint. This release does not assert an exact match to a particular row of the paper results.",
+  "validation": {
+    "strict_state_dict_loading": true,
+    "loaded_tensor_equality": true,
+    "cpu_forward_shape": [
+      1,
+      197,
+      768
+    ],
+    "finite_output": true,
+    "environment": {
+      "python": "3.12",
+      "torch": "2.6.0",
+      "torchvision": "0.21.0",
+      "timm": "0.9.16",
+      "einops": "0.8.1",
+      "transformers": "4.56.2",
+      "numpy": "1.26.4"
+    }
+  }
+}

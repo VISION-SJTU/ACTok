@@ -11,7 +11,7 @@ Xiaohui Zhang<sup>2</sup> · Yichao Yan<sup>1</sup> · Chao Ma<sup>1,✉</sup>
 
 <sup>1</sup> Shanghai Jiao Tong University &nbsp; <sup>2</sup> CISDI Information Technology
 
-[Highlights](#highlights) · [Method](#method) · [Results](#results) · [Getting started](#getting-started) · [Citation](#citation)
+[Highlights](#highlights) · [Method](#method) · [Results](#results) · [Checkpoint](#pretrained-checkpoint) · [Getting started](#getting-started) · [Citation](#citation)
 
 </div>
 
@@ -77,6 +77,45 @@ Results from **Table 2**. An all-ViT teacher ensemble improves ConvNeXt-B over t
 </details>
 
 The paper also studies dataset scaling, multimodal transfer with LLaVA-1.5, and feature consistency across input resolutions from 512 × 512 to 4096 × 4096. The main limitations are proxy-dataset bias and the difficulty of transferring between different architectural families.
+
+## Pretrained checkpoint
+
+**Start with the distilled ViT-B model:** the release includes the student backbone, learnable token, interaction blocks, and prediction heads, so you can extract ACTok features without loading any teachers.
+
+| Checkpoint | Implementation | Size | Download |
+| --- | --- | --- | --- |
+| ViT-B/16, original aggregation variant | `ModelAggregator_ViT.BackboneStuViT` | 684.5 MiB | [Weights](https://github.com/VISION-SJTU/ACTok/releases/download/vit-b-checkpoint-v1/vit_b_distill.pth) · [Release](https://github.com/VISION-SJTU/ACTok/releases/tag/vit-b-checkpoint-v1) |
+
+```bash
+mkdir -p pretrain
+curl -fL --retry 3 \
+  https://github.com/VISION-SJTU/ACTok/releases/download/vit-b-checkpoint-v1/vit_b_distill.pth \
+  -o pretrain/vit_b_distill.pth
+# Linux: replace shasum -a 256 with sha256sum if needed.
+(cd pretrain && shasum -a 256 -c ../checkpoints/SHA256SUMS)
+```
+
+After installing the dependencies, load the complete distilled model:
+
+```python
+import torch
+from ModelAggregator_ViT import BackboneStuViT
+
+model = BackboneStuViT(
+    student="vit_b", num_blocks=1,
+    in_dim=768, dim=768, out_dims=[512, 768, 768], token_dim=512,
+    teacher_type=["clip", "dinov3", "mae"],
+    pretrain_ckpt="pretrain/vit_b_distill.pth", img_size=224,
+).eval()
+
+# Supply an RGB image tensor normalized with ImageNet mean/std.
+# This zero tensor demonstrates the input and output shapes.
+with torch.inference_mode():
+    features = model(torch.zeros(1, 3, 224, 224))  # [1, 197, 768]
+    patch_features = features[:, 1:]              # [1, 196, 768]
+```
+
+This checkpoint matches **`ModelAggregator_ViT.py`**, not the newer combine variant used by the training example below. Its 197 state-dict tensors include all inference modules, with no teacher weights or optimizer state. Loading is strict to catch configuration mismatches. All 197 tensors were verified against the source file, and CPU inference produced finite features using PyTorch 2.6.0, torchvision 0.21.0, timm 0.9.16, and Transformers 4.56.2. The file does not contain training metadata, so this release does not associate it with a specific row of the paper's benchmark tables. Configuration and checksum are recorded in [`checkpoints/vit_b_distill.json`](checkpoints/vit_b_distill.json).
 
 ## Getting started
 
@@ -222,11 +261,11 @@ comparison/                    # comparison-model utilities
 - [x] Training source and aggregation variants
 - [x] Paper overview, qualitative comparisons, and reported results
 - [x] Installation and launch instructions
-- [ ] Downloadable ACTok checkpoints
+- [x] Downloadable ViT-B checkpoint (original aggregation variant)
 - [ ] Complete evaluation pipelines for the paper benchmarks
 - [ ] Validated environment lock and end-to-end reproduction recipe
 
-Teacher weights and trained checkpoints remain local and are excluded from Git. Paper settings above describe the manuscript experiments; this source release has not yet been validated end to end in a pinned environment.
+Teacher weights remain local. The selected ViT-B checkpoint is hosted as a GitHub Release asset; binary weights stay excluded from Git history. Paper settings above describe the manuscript experiments; this source release has not yet been validated end to end in a pinned environment.
 
 ## Citation
 
