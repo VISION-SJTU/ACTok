@@ -1,16 +1,86 @@
+<div align="center">
+
 # ACTok
 
-Research code for the ACTok ECCV project. This repository explores aggregating multiple pretrained visual teachers into a shared student through model tokens, cross-model interaction, and teacher-specific prediction heads.
+### Aggregating Cross-Domain Knowledge via Learnable Tokens for Multi-Teacher Distillation
 
-The current release contains training code, backbone wrappers, aggregation variants, feature visualization utilities, and fine-grained classification evaluation. Pretrained teacher weights and trained ACTok checkpoints are **not included**. Paper metadata, links, and citation information will be added when available.
+**Multiple vision experts. One versatile student.**
 
-## Approach
+Wu Ran<sup>1</sup> · Weijia Zhang<sup>1</sup> · Shuyang Pang<sup>2</sup> · Jingsheng Liu<sup>2</sup><br>
+Xiaohui Zhang<sup>2</sup> · Yichao Yan<sup>1</sup> · Chao Ma<sup>1,✉</sup>
 
-The ViT training entry point uses a student ViT with frozen CLIP, DINOv3, and MAE teachers. Student features are projected into teacher-specific branches, augmented with learnable model tokens, and processed by cross-model and inner-model blocks. Prediction heads provide feature and relational distillation losses. The repository also includes convolutional and mixed-backbone experiments, direct alignment, and gradient-conflict diagnostics.
+<sup>1</sup> Shanghai Jiao Tong University &nbsp; <sup>2</sup> CISDI Information Technology
 
-`main_ViT.py` currently selects `ModelAggregator_ViT_combine.py`. Other aggregation files are experimental variants; their checkpoint layouts and inference wrappers should not be assumed interchangeable.
+[Highlights](#highlights) · [Method](#method) · [Results](#results) · [Getting started](#getting-started) · [Citation](#citation)
 
-## Installation
+</div>
+
+ACTok brings the complementary strengths of **CLIP, MAE, and DINOv3** into a unified student. Learnable tokens bridge teacher-specific representation spaces, while alternating cross-space and intra-space interactions reconcile their knowledge. The framework supports **both CNN and ViT students**, using **only ImageNet-1K as the distillation dataset**.
+
+<div align="center">
+  <img src="assets/teaser.png" alt="PCA comparison of MAE, CLIP, DINOv3, Proteus, RADIOv2.5, and ACTok features across natural, aerial, and driving scenes" width="100%">
+  <p><em>Complementary knowledge, visible in the details. ViT-B feature visualizations from Figure 1 of the paper.</em></p>
+</div>
+
+## Highlights
+
+- **A small proxy dataset, a broad range of tasks.** Distillation uses 1.2M ImageNet-1K images, with evaluation on classification, fine-grained recognition, semantic segmentation, and depth estimation.
+- **Tokens that connect visual experts.** Learnable neural proxies aggregate teacher knowledge through alternating interactions across and within representation spaces.
+- **CNNs and Transformers, under one framework.** Evaluated with ResNet-50, ConvNeXt-B, ViT-B/16, and ViT-L/16 students, including ViT-to-CNN transfer.
+- **Strong fine-grained transfer.** ACTok ViT-B reaches **94.4% on Caltech101** and **90.8% on CUB**. Relative to the RADIOv2.5-B results cited in the paper, it gains **7.6 percentage points on Aircraft** with over **1,000× fewer distillation images**.
+
+The data comparison concerns the **student's distillation dataset**, not the pretrained teachers' data or total training compute. Results are reported by the manuscript; the compared methods use different teacher ensembles and student configurations.
+
+## Method
+
+<div align="center">
+  <img src="assets/framework.png" alt="ACTok framework: student feature projection, channel-wise learnable token concatenation, alternating cross-space and intra-space interaction, and global and local teacher alignment" width="100%">
+</div>
+
+1. **Represent visual features as tokens.** CNN feature maps and ViT sequences are projected into teacher-specific spaces.
+2. **Introduce learnable proxies.** A shared learnable token is concatenated along the channel dimension, allowing the framework to handle both architectural families.
+3. **Alternate cross-space and intra-space interaction.** Cross-space modules exchange complementary knowledge; shared intra-space modules consolidate each representation.
+4. **Align global and local knowledge.** Learnable-token alignment captures global semantics, while teacher-specific feature objectives preserve local information.
+
+The aggregation modules sit after the student backbone. For downstream tasks, the paper uses the representation projected into the DINO space, retaining the knowledge consolidated by the interaction modules.
+
+> **Code entry point:** `main_ViT.py` selects `ModelAggregator_ViT_combine.py`. This checkout also contains experimental variants; match the aggregation implementation and checkpoint when evaluating. The current combine variant includes relational losses beyond the manuscript's core objective.
+
+## Results
+
+### Transformer students
+
+Selected results from **Table 1** of the manuscript. Classification values are accuracy (%), ADE20K uses linear-probing mIoU (%), and NYUv2 uses RMSE. Higher is better except for RMSE.
+
+| Model | Distillation images | ImageNet ↑ | Aircraft ↑ | Caltech101 ↑ | CUB ↑ | ADE20K ↑ | NYUv2 ↓ |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Proteus-B (ViT-B/14) | 1.2M | 84.9 | 91.0 | 91.9 | 90.5 | — | 0.304 |
+| RADIOv2.5-B | ~1,400M | 84.8 | 83.5 | 91.2 | 85.9 | 48.9 | — |
+| **ACTok-B (ViT-B/16)** | **1.2M** | **85.6** | **91.1** | **94.4** | **90.8** | **46.5** | **0.300** |
+| Proteus-L (ViT-L/14) | 1.2M | 86.2 | 93.5 | 92.1 | 91.1 | — | 0.240 |
+| RADIOv2.5-L | ~1,400M | 87.4 | 86.3 | 92.5 | 88.2 | 51.5 | — |
+| **ACTok-L (ViT-L/16)** | **1.2M** | **87.5** | **92.1** | **93.8** | **91.4** | **50.3** | **0.258** |
+
+Proteus and RADIOv2.5 numbers are their officially reported results as collected in the manuscript. ACTok-B improves over all three of its teachers on Caltech101 (**94.4%** vs. CLIP **90.7%**, MAE **91.6%**, and DINOv3 **93.5%**). Results vary by task: RADIOv2.5 retains higher ADE20K mIoU, and Proteus-L retains lower NYUv2 RMSE.
+
+<details>
+<summary><strong>CNN students and cross-architecture transfer</strong></summary>
+
+Results from **Table 2**. An all-ViT teacher ensemble improves ConvNeXt-B over the all-CNN teacher setting on ImageNet, Aircraft, Caltech101, ADE20K, and NYUv2.
+
+| ACTok student | Teacher family | ImageNet ↑ | Aircraft ↑ | Caltech101 ↑ | CUB ↑ | ADE20K ↑ | NYUv2 ↓ |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ResNet-50 | ResNet-50 | 78.0 | 85.4 | 89.9 | 79.7 | 20.5 | 0.408 |
+| ConvNeXt-B | ConvNeXt-B | 83.0 | 88.7 | 93.1 | 88.7 | 34.6 | 0.361 |
+| ConvNeXt-B | ViT-B | 84.1 | 90.0 | 93.5 | 88.7 | 34.7 | 0.349 |
+
+</details>
+
+The paper also studies dataset scaling, multimodal transfer with LLaVA-1.5, and feature consistency across input resolutions from 512 × 512 to 4096 × 4096. The main limitations are proxy-dataset bias and the difficulty of transferring between different architectural families.
+
+## Getting started
+
+### Installation
 
 Use a Python environment with Python 3.10 or later. Training requires a CUDA-enabled PyTorch environment; install matching PyTorch and torchvision builds for your CUDA installation, then install the remaining dependencies:
 
@@ -67,6 +137,22 @@ pretrain/
 Verify the MAE path before training: the current MAE wrapper skips checkpoint loading if the file is missing.
 
 ## Training
+
+### Paper configuration
+
+The manuscript reports the following distillation setup (Section 4.1):
+
+| Setting | ResNet-50 | ConvNeXt-B | ViT-B/16 | ViT-L/16 |
+| --- | --- | --- | --- | --- |
+| Proxy dataset | ImageNet-1K | ImageNet-1K | ImageNet-1K | ImageNet-1K |
+| Epochs / input resolution | 300 / 224 × 224 | 300 / 224 × 224 | 300 / 224 × 224 | 300 / 224 × 224 |
+| Batch size | 1024 | 1024 | 1024 | 512 |
+| Learnable token dimension | 1024 | 512 | 512 | 768 |
+| Alternating interaction stages | 2 | 2 | 1 | 1 |
+
+Shared settings: AdamW, learning rate **1e-4**, weight decay **0.01**, mixed precision, and four NVIDIA A800 80 GB GPUs. During downstream adaptation, the paper scales the interaction modules' learning rate by **0.1×** and uses features projected into the DINO space.
+
+### Launch example
 
 Run commands from the repository root. The example below configures a ViT-B student and three teachers on one GPU. Adjust the batch size to fit GPU memory.
 
@@ -133,7 +219,28 @@ comparison/                    # comparison-model utilities
 
 ## Release status
 
-This is a source-code release. End-to-end training and evaluation have not been validated in a pinned environment for this release. Checkpoints, datasets, exact paper settings, result tables, and citation metadata are not bundled.
+- [x] Training source and aggregation variants
+- [x] Paper overview, qualitative comparisons, and reported results
+- [x] Installation and launch instructions
+- [ ] Downloadable ACTok checkpoints
+- [ ] Complete evaluation pipelines for the paper benchmarks
+- [ ] Validated environment lock and end-to-end reproduction recipe
+
+Teacher weights and trained checkpoints remain local and are excluded from Git. Paper settings above describe the manuscript experiments; this source release has not yet been validated end to end in a pinned environment.
+
+## Citation
+
+If ACTok is useful for your research, please cite our manuscript. The entry below uses the author names as printed in the manuscript; publication metadata will be updated when available.
+
+```bibtex
+@misc{actok2026,
+  title  = {Aggregating Cross-Domain Knowledge via Learnable Tokens for Multi-Teacher Distillation},
+  author = {{Wu Ran} and {Weijia Zhang} and {Shuyang Pang} and {Jingsheng Liu} and {Xiaohui Zhang} and {Yichao Yan} and {Chao Ma}},
+  year   = {2026},
+  note   = {Research manuscript},
+  url    = {https://github.com/VISION-SJTU/ACTok}
+}
+```
 
 ## Acknowledgments
 
