@@ -2,7 +2,7 @@
 
 # ACTok
 
-### Aggregating Cross-Domain Knowledge via Learnable Tokens for Multi-Teacher Distillation
+### [ECCV 2026] Aggregating Cross-Domain Knowledge via Learnable Tokens for Multi-Teacher Distillation
 
 **Multiple vision experts. One versatile student.**
 
@@ -269,14 +269,14 @@ Teacher weights remain local. The selected ViT-B checkpoint is hosted as a GitHu
 
 ## Citation
 
-If ACTok is useful for your research, please cite our manuscript. The entry below uses the author names as printed in the manuscript; publication metadata will be updated when available.
+If ACTok is useful for your research, please cite our paper accepted at **ECCV 2026**:
 
 ```bibtex
-@misc{actok2026,
+@inproceedings{actok2026,
   title  = {Aggregating Cross-Domain Knowledge via Learnable Tokens for Multi-Teacher Distillation},
   author = {{Wu Ran} and {Weijia Zhang} and {Shuyang Pang} and {Jingsheng Liu} and {Xiaohui Zhang} and {Yichao Yan} and {Chao Ma}},
   year   = {2026},
-  note   = {Research manuscript},
+  booktitle = {European Conference on Computer Vision (ECCV)},
   url    = {https://github.com/VISION-SJTU/ACTok}
 }
 ```
