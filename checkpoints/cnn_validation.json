@@ -1,0 +1,104 @@
+{
+  "validation_scope": "Strict checkpoint loading, finite CPU inference, and reproduction of historical backbone PCA images. This is not benchmark reproduction.",
+  "comparison": "Raw RGB channels are compared without sign flips, channel permutation, or fitted color transforms; a 2-3 pixel border is excluded. Small rasterization and JPEG differences remain.",
+  "passed": [
+    {
+      "checkpoint": "resnet_distill.pth",
+      "strict_backbone_loading": true,
+      "state_keys": 318,
+      "feature_source": "backbone",
+      "feature_shape": [
+        1,
+        2048,
+        96,
+        96
+      ],
+      "reference": "Historical backup/visualizations/pca.png",
+      "source_image": "imgs/oranges.jpeg",
+      "input_size": 3072,
+      "normalization": "legacy-openai",
+      "pca": "linear PCA, whiten=True, random_state=0",
+      "rgb_channel_correlations": [
+        0.9999756253250074,
+        0.9999672741646557,
+        0.9999567583149397
+      ],
+      "mean_rgb_channel_correlation": 0.9999665526015343,
+      "pixel_rmse": 0.0009392472739215197,
+      "pixel_exact": false
+    },
+    {
+      "checkpoint": "convnext_b_norm_distill.pth",
+      "strict_full_state_loading": true,
+      "cross_groups": 64,
+      "feature_source": "backbone",
+      "feature_shape": [
+        1,
+        1024,
+        128,
+        128
+      ],
+      "reference": "Paper Figure 6 (b), embedded JPEG",
+      "source_image": "imgs/fern.webp",
+      "input_size": 4096,
+      "normalization": "legacy-openai",
+      "pca": "cosine KernelPCA, 3 components, random_state=0",
+      "rgb_channel_correlations": [
+        0.999141072505106,
+        0.9991973899966365,
+        0.9950510555090579
+      ],
+      "mean_rgb_channel_correlation": 0.9977965060036001,
+      "pixel_rmse": 0.008989752142680314,
+      "pixel_exact": false
+    },
+    {
+      "checkpoint": "convnext_b_norm_distill_allvit.pth",
+      "strict_full_state_loading": true,
+      "cross_groups": 128,
+      "feature_source": "backbone",
+      "feature_shape": [
+        1,
+        1024,
+        128,
+        128
+      ],
+      "reference": "visualizations/fern.png (also Figure 6 (c))",
+      "source_image": "imgs/fern.webp",
+      "input_size": 4096,
+      "normalization": "legacy-openai",
+      "pca": "cosine KernelPCA, 3 components, random_state=0",
+      "rgb_channel_correlations": [
+        0.9999999856633071,
+        0.9999999553550467,
+        0.9999998630099943
+      ],
+      "mean_rgb_channel_correlation": 0.999999934676116,
+      "pixel_rmse": 4.583417800593401e-05,
+      "pixel_exact": false
+    }
+  ],
+  "not_published": [
+    {
+      "checkpoint": "resnet_distill_student.pth",
+      "reason": "Contains interaction blocks but no prediction heads; differs from the validated ResNet backbone checkpoint."
+    },
+    {
+      "checkpoint": "convnext_b_norm_distill_l2.pth",
+      "reason": "PCA does not match the selected historical/paper reference; excluded from this release."
+    },
+    {
+      "architecture": "ViT-L",
+      "reason": "No distilled ViT-L student checkpoint found in the project. Files with Large teachers still contain a ViT-B student."
+    }
+  ],
+  "environment": {
+    "python": "3.12",
+    "torch": "2.6.0",
+    "torchvision": "0.21.0",
+    "numpy": "2.2.6",
+    "scikit-learn": "1.5.2",
+    "scipy": "1.14.1",
+    "matplotlib": "3.9.4"
+  }
+}

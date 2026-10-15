@@ -1,0 +1,35 @@
+[
+  {
+    "filename": "resnet_distill.pth",
+    "architecture": "resnet50",
+    "teacher_family": "ResNet-50 teachers; backbone-only file",
+    "size_bytes": 94343813,
+    "sha256": "1616afc7ff1059401fa119d895bb4d2547c20621257bc5a7e196b8d41d0eb5d1",
+    "download_url": "https://github.com/VISION-SJTU/ACTok/releases/download/cnn-checkpoints-v1/resnet_distill.pth",
+    "loading": "tools.validate_checkpoint_pca.load_backbone",
+    "validated_representation": "backbone",
+    "normalization_for_historical_PCA": "legacy-openai"
+  },
+  {
+    "filename": "convnext_b_norm_distill.pth",
+    "architecture": "convnext_b",
+    "teacher_family": "CNN teachers",
+    "size_bytes": 388794437,
+    "sha256": "b4e4ad04af21140b946451e4f77daf83ca352dae261a6e63890877e320217763",
+    "download_url": "https://github.com/VISION-SJTU/ACTok/releases/download/cnn-checkpoints-v1/convnext_b_norm_distill.pth",
+    "loading": "tools.validate_checkpoint_pca.load_backbone",
+    "validated_representation": "backbone",
+    "normalization_for_historical_PCA": "legacy-openai"
+  },
+  {
+    "filename": "convnext_b_norm_distill_allvit.pth",
+    "architecture": "convnext_b",
+    "teacher_family": "ViT teachers",
+    "size_bytes": 382301470,
+    "sha256": "4c87f9a5a6b6896c822d86763e7345a60cb101d2ef1265542214668089a234b7",
+    "download_url": "https://github.com/VISION-SJTU/ACTok/releases/download/cnn-checkpoints-v1/convnext_b_norm_distill_allvit.pth",
+    "loading": "tools.validate_checkpoint_pca.load_backbone",
+    "validated_representation": "backbone",
+    "normalization_for_historical_PCA": "legacy-openai"
+  }
+]

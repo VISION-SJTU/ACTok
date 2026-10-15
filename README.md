@@ -117,6 +117,56 @@ with torch.inference_mode():
 
 This checkpoint matches **`ModelAggregator_ViT.py`**, not the newer combine variant used by the training example below. Its 197 state-dict tensors include all inference modules, with no teacher weights or optimizer state. Loading is strict to catch configuration mismatches. All 197 tensors were verified against the source file, and CPU inference produced finite features using PyTorch 2.6.0, torchvision 0.21.0, timm 0.9.16, and Transformers 4.56.2. The file does not contain training metadata, so this release does not associate it with a specific row of the paper's benchmark tables. Configuration and checksum are recorded in [`checkpoints/vit_b_distill.json`](checkpoints/vit_b_distill.json).
 
+### CNN checkpoints: checked against historical PCA
+
+The following checkpoints were tested **before release** using the old visualization settings. These comparisons use **backbone features**, matching the historical images; they do not validate projected-head features or reproduce task benchmark scores.
+
+| Model | Teachers | Size | Download | PCA reference agreement |
+| --- | --- | --- | --- | --- |
+| ResNet-50 | ResNet-50 | 90.0 MiB | [Weights](https://github.com/VISION-SJTU/ACTok/releases/download/cnn-checkpoints-v1/resnet_distill.pth) | 0.99997 RGB correlation vs. historical oranges image |
+| ConvNeXt-B | CNN | 370.8 MiB | [Weights](https://github.com/VISION-SJTU/ACTok/releases/download/cnn-checkpoints-v1/convnext_b_norm_distill.pth) | 0.99780 vs. paper Figure 6(b), JPEG reference |
+| ConvNeXt-B | ViT | 364.6 MiB | [Weights](https://github.com/VISION-SJTU/ACTok/releases/download/cnn-checkpoints-v1/convnext_b_norm_distill_allvit.pth) | 0.9999999 vs. `visualizations/fern.png`, also Figure 6(c) |
+
+Correlation is averaged over the original RGB channels, without sign flips, channel permutation, or fitted color transforms. These are near-matches, not pixel-exact equality. See the [validation report](checkpoints/cnn_validation.json) and [release](https://github.com/VISION-SJTU/ACTok/releases/tag/cnn-checkpoints-v1).
+
+<p align="center"><img src="assets/checkpoint_validation.png" alt="Historical and reproduced PCA images: ResNet-50, ConvNeXt-B with CNN teachers, and ConvNeXt-B with ViT teachers" width="760"></p>
+
+The ResNet file contains only the backbone. The ConvNeXt files contain the backbone and aggregation modules, but the validated PCA uses the `student.*` backbone weights. Load those weights strictly:
+
+```python
+from tools.validate_checkpoint_pca import load_backbone
+
+resnet = load_backbone("resnet50", "pretrain/resnet_distill.pth")
+convnext = load_backbone("convnext_b", "pretrain/convnext_b_norm_distill_allvit.pth")
+# Both return BCHW feature maps at 32x spatial downsampling.
+```
+
+Download each file into `pretrain/` from the table above. Model information and SHA-256 hashes are in [`checkpoints/cnn_checkpoints.json`](checkpoints/cnn_checkpoints.json). After downloading all three CNN files, verify them with `(cd pretrain && shasum -a 256 -c ../checkpoints/CNN_SHA256SUMS)`. To reproduce the historical PCA (after installing `requirements.txt`):
+
+```bash
+python tools/validate_checkpoint_pca.py \
+  --architecture resnet50 --checkpoint pretrain/resnet_distill.pth \
+  --image imgs/oranges.jpeg --input-size 3072 --pca linear-whiten \
+  --reference assets/checkpoint_reference_resnet.png \
+  --output outputs/checkpoint_validation/resnet.png
+
+python tools/validate_checkpoint_pca.py \
+  --architecture convnext_b --checkpoint pretrain/convnext_b_norm_distill.pth \
+  --image imgs/fern.webp --input-size 4096 --pca cosine-kernel \
+  --reference assets/checkpoint_reference_convnext_cnn.png \
+  --output outputs/checkpoint_validation/convnext_cnn.png
+
+python tools/validate_checkpoint_pca.py \
+  --architecture convnext_b --checkpoint pretrain/convnext_b_norm_distill_allvit.pth \
+  --image imgs/fern.webp --input-size 4096 --pca cosine-kernel \
+  --reference visualizations/fern.png \
+  --output outputs/checkpoint_validation/convnext_vit.png
+```
+
+The default `--normalization legacy-openai` deliberately preserves the old PCA scripts' OpenAI mean/std; `--normalization imagenet` runs a separate ImageNet-normalized experiment. The validator writes new images and JSON metrics without overwriting the references. High-resolution inference and kernel PCA require substantial host memory.
+
+No distilled **ViT-L student** checkpoint was found in this checkout. `mae_pretrain_vit_large.pth` and `clip_vit_l_14.pt` are teacher weights; `vit_b_clsl_mael_dinov3l.pth` still contains a ViT-B student. A ViT-L student checkpoint is needed before validating or publishing that model.
+
 ## Getting started
 
 ### Installation
@@ -262,10 +312,11 @@ comparison/                    # comparison-model utilities
 - [x] Paper overview, qualitative comparisons, and reported results
 - [x] Installation and launch instructions
 - [x] Downloadable ViT-B checkpoint (original aggregation variant)
+- [x] ResNet-50 and ConvNeXt-B checkpoints with historical PCA validation
 - [ ] Complete evaluation pipelines for the paper benchmarks
 - [ ] Validated environment lock and end-to-end reproduction recipe
 
-Teacher weights remain local. The selected ViT-B checkpoint is hosted as a GitHub Release asset; binary weights stay excluded from Git history. Paper settings above describe the manuscript experiments; this source release has not yet been validated end to end in a pinned environment.
+Teacher weights remain local. Selected student checkpoints are hosted as GitHub Release assets; binary weights stay excluded from Git history. Paper settings above describe the manuscript experiments; this source release has not yet been validated end to end in a pinned environment.
 
 ## Citation
 
