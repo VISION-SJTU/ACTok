@@ -86,7 +86,16 @@ def extract_patch_feats(model, image, input_size, use_clip_stats=False, downscal
         b, c, h, w = features.shape
         features = features.view(b, c, h * w).permute(0, 2, 1) # [b, h*w, c]
     else:
-        features = features[:, 5:, :]   # drop CLS + register tokens (DINOv3: 5)
+        # Combine inference already returns patches; plain ViT adds one CLS,
+        # while DINOv3 adds CLS plus four register tokens.
+        expected_patches = input_size ** 2
+        prefix_tokens = features.shape[1] - expected_patches
+        if prefix_tokens not in (0, 1, 5):
+            raise ValueError(
+                f"Expected {expected_patches} patches with 0, 1, or 5 prefix tokens, "
+                f"got {features.shape[1]} tokens"
+            )
+        features = features[:, prefix_tokens:, :]
     return features.squeeze(0)  # [N, D]
 
 

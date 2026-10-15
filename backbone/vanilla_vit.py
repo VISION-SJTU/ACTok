@@ -8,6 +8,8 @@ class VanillaViT(torch.nn.Module):
     def __init__(self, model_name="vit_base_patch16_224", pretrained=False, img_size=224):
         super(VanillaViT, self).__init__()
         self.model = timm.create_model(model_name, pretrained=pretrained)
+        # Positional embeddings are explicitly interpolated for PCA resolutions.
+        self.model.patch_embed.strict_img_size = False
         self.intep_size = img_size // 16
         # self.interp_pos_embed()
     

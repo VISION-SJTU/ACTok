@@ -291,6 +291,21 @@ Keep the model configuration and teacher order consistent with the checkpoint. `
 
 The ADE20K, depth, and ImageNet evaluation folders currently have no implementation in this checkout.
 
+### PCA with the combine ViT model
+
+`ModelAggregator_ViT_combine.BackboneStuViT` now returns DINO-projected **patch features after channel concatenation and the cross-model / inner-model interactions**. Its output has no CLS or register-token prefix. The PCA utility detects whether a model returns patches only, ViT tokens, or DINOv3 tokens, so patches are not removed twice.
+
+For the local ViT-B / Large-teacher combine checkpoint:
+
+```bash
+python tools/pca_combine_vit.py \
+  --checkpoint pretrain/vit_b_clsl_mael_dinov3l.pth \
+  --image imgs/aerial.jpeg --input-size 2048 \
+  --output outputs/combine_pca/aerial.png
+```
+
+This configuration uses **one cross-model block and one inner-model block**, with `dim=768`, `token_dim=512`, and DINO output dimension `1024`. It requires the matching local combine checkpoint; the original `vit_b_distill.pth` release has a different projection/head structure. Missing inference weights produce an error; only unused LD heads may be absent from older combine checkpoints. The script saves the PCA image and a JSON configuration record, using the historical OpenAI normalization. High-resolution attention is checked against native attention at 224 × 224 before using a memory-efficient implementation.
+
 ## Code structure
 
 ```text

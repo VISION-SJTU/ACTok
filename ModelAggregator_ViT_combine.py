@@ -355,63 +355,33 @@ class BackboneStuViT(nn.Module):
         if os.path.exists(pretrain_ckpt):
             ckp = torch.load(pretrain_ckpt, map_location="cpu", weights_only=False)
             ckp = ckp.get('model', ckp)
-            for name, _ in self.named_parameters():
-                if name not in ckp:
-                    print(f"Warning: {name} not in checkpoint ... ")
-            self.load_state_dict(ckp, strict=False)
+            # Training-only teachers and LD heads are not needed for DINO inference.
+            ckp = {name: value for name, value in ckp.items()
+                   if not name.startswith("teachers.")}
+            result = self.load_state_dict(ckp, strict=False)
+            optional = ("dino_ld_head.", "mae_ld_head.")
+            missing = [name for name in result.missing_keys if not name.startswith(optional)]
+            unexpected = [name for name in result.unexpected_keys if not name.startswith(optional)]
+            if missing or unexpected:
+                raise RuntimeError(f"Incompatible combine checkpoint: missing={missing}, unexpected={unexpected}")
         self.student.interp_pos_embed()
 
     @torch.no_grad()
     def forward(self, x):
+        """Return DINO-projected patch features [B, H/16 * W/16, D].
+
+        The student CLS token participates in the interactions and is removed
+        exactly once before the DINO prediction head.
         """
-        x: [b, c, h, w]: images
-        """
-        # student branch
-        # loss_dict = self.model_agg(x)
-        # print(loss_dict)
-        # student branch
         feat = self.student(x)
-        b, l, d = feat.shape
-        return feat
-        projs = self.stu_proj(feat)
-        num_teacher = len(self.teacher_type)
-        projs = torch.chunk(projs, chunks=num_teacher, dim=-1) # [[b,c,h,w],...]
-        # print("Student proj: ", projs[0].shape)
-        # cat token
-        token = self.model_token.repeat(b, l, 1)
-        projs = [torch.cat([item, token], dim=-1) for item in projs]
+        batch, length, _ = feat.shape
+        projs = self.stu_proj(feat).chunk(len(self.teacher_type), dim=-1)
+        token = self.model_token.expand(batch, length, -1)
+        projs = [torch.cat([feature, token], dim=-1) for feature in projs]
         for block in self.blocks:
             projs = block(projs)
-        # chunk projs
-        # model_cls_tokens_raw = [item[:, 0, :self.dim] for item in projs]
-        # model_token_out = [item[:, [0], :] for item in projs] # [b, 1, d]
-        model_feat_out =  [item[:, 1:, :] for item in projs] # [b, l, d]
-        # clip_cls_token = self.model_head(model_token_out[0])[:, :self.out_dim_dict["clip"]]
-        # dino_cls_token = self.model_head(model_token_out[1])
-        # mae_cls_token = self.model_head(model_token_out[-1])
-        # cls_token = dino_cls_token
-        # clip_feat = self.clip_head.norm(model_feat_out[0])
-        # clip_feat = model_feat_out[0]
-        dino_feat = self.dino_head(model_feat_out[1])
-        # mae_feat = self.mae_head(model_feat_out[2])
-        # tea feats
-        # clip_feat_tea = self.clip(x)
-        # mae_feat_tea = self.mae(x)
-        # dino_feat_tea = self.dinov3(x)
-        # compute linear cka
-        # print(clip_feat_tea.shape, clip_cls_token.shape)
-        # clip_token_cka = linear_CKA(clip_cls_token, clip_feat_tea)
-        # dino_token_cka = linear_CKA(dino_cls_token, dino_feat_tea[:,0,:])
-        # mae_token_cka = linear_CKA(mae_cls_token, mae_feat_tea[:, 0, :])
-
-        # dino_feat_cka = linear_CKA(dino_feat[:, 1:, :].view(b, -1), dino_feat_tea[:, 5:, :].view(b, -1))
-        # mae_feat_cka = linear_CKA(mae_feat[:, 1:, :].view(b, -1), mae_feat_tea[:, 1:, :].view(b, -1))
-        # print("clip token cka: ", clip_token_cka)
-        # print("dino token cka: ", dino_token_cka)
-        # print("mae token cka: ", mae_token_cka)
-        # print("dino_feat_cka: ", dino_feat_cka)
-        # print("mae_feat_cka: ", mae_feat_cka)
-        return dino_feat # self.model_head.norm(projs[1])
+        # The combine training loss assigns branch 1 to DINO for CLIP/DINO/MAE.
+        return self.dino_head(projs[1][:, 1:, :])
 
 if __name__ == "__main__":
     from backbone.vit import ViT, clip_vit_b_16
